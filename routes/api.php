@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\DB;
@@ -36,6 +37,27 @@ Route::get('/health/database', function () {
  */
 Route::middleware(['keycloak', 'context.enricher', 'resource.tag:FINANCIAL', 'pdp'])->group(function () {
 
+    // ---- Lecture (AJOUTS) --------------------------------------------------
+
+    // Liste des wallets du sujet (admin voit tout, directeur d'agence voit son agence)
+    Route::get('/wallets', [WalletController::class, 'index'])
+        ->middleware(['check.role:client_bancaire,client_non_bancaire,admin,directeur_agence', 'throttle:wallet-read'])
+        ->name('wallets.index');
+
+    // Détail d’un wallet
+    Route::get('/wallets/{wallet}', [WalletController::class, 'show'])
+        ->middleware(['check.role:client_bancaire,client_non_bancaire,admin,directeur_agence', 'throttle:wallet-read'])
+        ->whereUuid('wallet')
+        ->name('wallets.show');
+
+    // Historique des transactions (alias pratique)
+    Route::get('/wallets/{wallet}/transactions', [BalanceController::class, 'getStatement'])
+        ->middleware(['check.role:client_bancaire,client_non_bancaire,admin,directeur_agence', 'throttle:wallet-read'])
+        ->whereUuid('wallet')
+        ->name('wallets.transactions');
+
+    // ---- Création / statut --------------------------------------------------
+
     // Création portefeuille — écriture ⇒ throttle + idempotency
     Route::post('/wallets', [WalletController::class, 'create'])
         ->middleware(['check.role:client_bancaire,client_non_bancaire,admin', 'throttle:wallet-write', 'idempotency:600'])
@@ -57,7 +79,8 @@ Route::middleware(['keycloak', 'context.enricher', 'resource.tag:FINANCIAL', 'pd
         ->whereUuid('wallet')
         ->name('wallets.activate');
 
-    // --- Transactions ---
+    // ---- Transactions -------------------------------------------------------
+
     Route::post('/wallets/{wallet}/credit', [TransactionController::class, 'credit'])
         ->middleware(['check.role:client_bancaire,client_non_bancaire,admin', 'throttle:wallet-tx', 'idempotency:600'])
         ->whereUuid('wallet')
@@ -68,14 +91,14 @@ Route::middleware(['keycloak', 'context.enricher', 'resource.tag:FINANCIAL', 'pd
         ->whereUuid('wallet')
         ->name('wallets.debit');
 
-    // --- Lecture (solde / relevé) ---
+    // Solde / relevé (compat)
     Route::get('/wallets/{wallet}/balance',   [BalanceController::class, 'getBalance'])
-        ->middleware(['check.role:client_bancaire,client_non_bancaire,admin'])
+        ->middleware(['check.role:client_bancaire,client_non_bancaire,admin,directeur_agence'])
         ->whereUuid('wallet')
         ->name('wallets.balance');
 
     Route::get('/wallets/{wallet}/statement', [BalanceController::class, 'getStatement'])
-        ->middleware(['check.role:client_bancaire,client_non_bancaire,admin'])
+        ->middleware(['check.role:client_bancaire,client_non_bancaire,admin,directeur_agence'])
         ->whereUuid('wallet')
         ->name('wallets.statement');
 });

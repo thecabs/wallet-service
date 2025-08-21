@@ -11,6 +11,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 
 class WalletController extends Controller
 {
@@ -28,6 +29,83 @@ class WalletController extends Controller
             'version'   => config('app.version', '1.0.0'),
         ]);
     }
+
+    // ---------------------------------------------------------------------
+    // AJOUTS : Lecture (liste + détail) sans régression
+    // ---------------------------------------------------------------------
+
+    /**
+     * GET /api/wallets
+     * - Admin : tous
+     * - Directeur d’agence : wallets de son agence
+     * - Sinon : wallets du sujet
+     */
+    public function index(Request $request): JsonResponse
+    {
+        $ext      = $this->getExternalId($request);
+        $agencyId = $this->getAgencyId($request);
+        $roles    = $this->getRoles($request);
+
+        $isAdmin = (bool) array_intersect($roles, [
+            'admin','superadmin','bo_admin','bo_superadmin','role_admin','role_superadmin',
+        ]);
+
+        $isAgencyDirector = (bool) array_intersect($roles, [
+            'directeur_agence','agency_director','role_agency_director',
+        ]);
+
+        $q = Wallet::query()->select(['id','external_id','agency_id','devise','solde','statut','created_at','updated_at']);
+
+        if ($isAdmin) {
+            // no filter
+        } elseif ($isAgencyDirector && $agencyId) {
+            $q->where('agency_id', $agencyId);
+        } else {
+            $q->where('external_id', $ext);
+        }
+
+        $items = $q->orderByDesc('created_at')->get()->map(fn (Wallet $w) => $this->sanitizeWallet($w))->values();
+
+        return response()->json(['data' => $items]);
+    }
+
+    /**
+     * GET /api/wallets/{wallet}
+     * - Admin : accès
+     * - Directeur agence : si même agence
+     * - Sinon : owner seulement
+     */
+    public function show(Request $request, Wallet $wallet): JsonResponse
+    {
+        $req        = $request;
+        $externalId = $this->getExternalId($req);
+        $agencyId   = $this->getAgencyId($req);
+        $roles      = $this->getRoles($req);
+
+        $isOwner = $externalId && $wallet->external_id === $externalId;
+
+        $isAdmin = (bool) array_intersect($roles, [
+            'admin','superadmin','bo_admin','bo_superadmin','role_admin','role_superadmin',
+        ]);
+
+        $isAgencyDirectorSameAgency =
+            (bool) array_intersect($roles, [
+                'directeur_agence','agency_director','role_agency_director',
+            ])
+            && $agencyId
+            && $wallet->agency_id
+            && $wallet->agency_id === $agencyId;
+
+        if (!($isOwner || $isAdmin || $isAgencyDirectorSameAgency)) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+
+        return response()->json(['data' => $this->sanitizeWallet($wallet)]);
+    }
+
+    // ---------------------------------------------------------------------
+    // EXISTANT : Création + statut (inchangé)
+    // ---------------------------------------------------------------------
 
     /**
      * Création de portefeuille (sans régression).
